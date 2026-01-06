@@ -1,13 +1,10 @@
-from django.shortcuts import render
-
-# Create your views here.
-# apps/devices/views.py
 from rest_framework.views import APIView
 from rest_framework import status
 from django.utils.timezone import now
 
 from .models import Device
 from apps.common.utils.response import api_response
+
 
 class DeviceRegisterView(APIView):
     authentication_classes = []   # Bootstrap phase
@@ -17,13 +14,45 @@ class DeviceRegisterView(APIView):
         try:
             payload = request.data
 
+            hostname = payload["hostname"]
+            os_type = payload["os_type"]
+            os_version = payload["os_version"]
+            agent_version = payload["agent_version"]
+            ip_address = request.META.get("REMOTE_ADDR")
+
+            # 🔹 Check if device already exists
+            device = Device.objects.filter(
+                hostname=hostname,
+                os_type=os_type
+            ).first()
+
+            if device:
+                # 🔹 Update last seen / IP / agent version
+                device.ip_address = ip_address
+                device.agent_version = agent_version
+                device.last_seen = now()
+                device.save(update_fields=[
+                    "ip_address",
+                    "agent_version",
+                    "last_seen"
+                ])
+
+                return api_response(
+                    True,
+                    "Device already registered",
+                    {"device_id": str(device.id)},
+                    status.HTTP_200_OK
+                )
+
+            # 🔹 New device registration
             device = Device.objects.create(
-                hostname=payload["hostname"],
-                os_type=payload["os_type"],
-                os_version=payload["os_version"],
-                ip_address=request.META.get("REMOTE_ADDR"),
-                agent_version=payload["agent_version"],
-                certificate_fingerprint="PENDING"
+                hostname=hostname,
+                os_type=os_type,
+                os_version=os_version,
+                ip_address=ip_address,
+                agent_version=agent_version,
+                certificate_fingerprint="PENDING",
+                last_seen=now()
             )
 
             return api_response(

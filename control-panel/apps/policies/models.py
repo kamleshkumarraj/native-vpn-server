@@ -20,5 +20,7 @@ class IPSecPolicy(models.Model):
     full_tunnel = models.BooleanField(default=True)
     include_subnets = models.JSONField(default=list)
     exclude_subnets = models.JSONField(default=list)
+    
+    is_active = models.BooleanField(default=True)
 
     created_at = models.DateTimeField(auto_now_add=True)

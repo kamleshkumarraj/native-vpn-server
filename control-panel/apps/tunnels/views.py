@@ -7,6 +7,8 @@ from rest_framework import status
 
 from .models import Tunnel
 from apps.common.utils.response import api_response
+from apps.devices.models import Device
+from apps.policies.models import IPSecPolicy
 
 class TunnelView(APIView):
 
@@ -19,7 +21,12 @@ class TunnelView(APIView):
 
     def post(self, request):
         try:
+            device = Device.objects.filter(pk=request.data["device_id"]).first()
+            request.data["device"] = device
+            policy = IPSecPolicy.objects.filter(pk=request.data["policy_id"]).first()
+            request.data["policy"] = policy
             tunnel = Tunnel.objects.create(**request.data)
+            
             return api_response(
                 True,
                 "Tunnel created",

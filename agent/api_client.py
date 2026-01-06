@@ -10,7 +10,15 @@ def mtls_get(endpoint):
         timeout=10
     )
 
+import os
+import requests
+from config import CONTROL_PLANE_URL, CERT_PATH, KEY_PATH, CA_CERT_PATH
+
+
 def mtls_post(endpoint, payload):
+    if not os.path.exists(CERT_PATH):
+        raise RuntimeError("Client certificate not available")
+
     return requests.post(
         f"{CONTROL_PLANE_URL}{endpoint}",
         json=payload,
@@ -18,3 +26,4 @@ def mtls_post(endpoint, payload):
         verify=CA_CERT_PATH,
         timeout=10
     )
+

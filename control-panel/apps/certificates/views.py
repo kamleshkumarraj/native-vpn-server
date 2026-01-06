@@ -1,42 +1,49 @@
-from django.shortcuts import render
-
-# Create your views here.
-# apps/certificates/views.py
 from rest_framework.views import APIView
 from rest_framework import status
 from django.utils.timezone import now
 
 from .models import Certificate
 from .services import sign_csr
-from apps.devices.models import Device
-from apps.common.auth.cert_auth import DeviceCertificateAuthentication
 from apps.common.utils.response import api_response
 
 import tempfile
 import uuid
+import traceback
+
 
 class CertificateSignView(APIView):
-    authentication_classes = [DeviceCertificateAuthentication]
+    """
+    Bootstrap certificate signing endpoint
+    NO authentication / NO mTLS
+    """
+    authentication_classes = []
+    permission_classes = []
 
     def post(self, request):
         try:
-            device = request.user
             csr_pem = request.data.get("csr")
 
             if not csr_pem:
-                return api_response(False, "CSR is required", http_status=400)
+                return api_response(
+                    False,
+                    "CSR is required",
+                    http_status=status.HTTP_400_BAD_REQUEST
+                )
 
-            with tempfile.NamedTemporaryFile(delete=False) as csr_file:
-                csr_file.write(csr_pem.encode())
+            # 🔹 Save CSR to temp file
+            with tempfile.NamedTemporaryFile(delete=False, mode="w") as csr_file:
+                csr_file.write(csr_pem)
                 csr_path = csr_file.name
 
-            cert_path = f"/tmp/{uuid.uuid4()}.crt"
-            sign_csr(csr_path, cert_path)
+            # 🔹 Sign CSR (returns REAL cert path)
+            cert_path = sign_csr(csr_path)
 
-            cert_pem = open(cert_path).read()
+            # 🔹 Read signed certificate
+            with open(cert_path, "r") as f:
+                cert_pem = f.read()
 
+            # 🔹 Persist certificate metadata (device mapping later)
             Certificate.objects.create(
-                device=device,
                 cert_type="DEVICE",
                 serial_number=str(uuid.uuid4()),
                 fingerprint="TO_BE_COMPUTED",
@@ -46,10 +53,12 @@ class CertificateSignView(APIView):
             return api_response(
                 True,
                 "Certificate issued successfully",
-                {"certificate": cert_pem}
+                {"certificate": cert_pem},
+                status.HTTP_200_OK
             )
 
         except Exception as e:
+            traceback.print_exc()
             return api_response(
                 False,
                 f"Certificate signing failed: {str(e)}",

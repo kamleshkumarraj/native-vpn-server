@@ -1,42 +1,66 @@
-# agent/ipsec/windows.py
 from ipsec.base import IPSecBase
 import subprocess
+import json
+
 
 class WindowsIPSec(IPSecBase):
+    """
+    Windows native IPsec implementation.
+    Uses Windows secure defaults for crypto.
+    Requires Administrator privileges.
+    """
+
+    def _run_ps(self, script):
+        return subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy", "Bypass",
+                "-Command", script
+            ],
+            capture_output=True,
+            text=True
+        )
 
     def apply_tunnel(self, tunnel, policy):
+        rule_name = tunnel["id"]
+        peer_ip = tunnel["peer_ip"]
+
         ps_script = f"""
-New-NetIPsecMainModeCryptoSet -Name "MMCrypto" `
-  -Encryption AES256 `
-  -Integrity SHA256 `
-  -DHGroup Group14
+# Remove existing rule (idempotent)
+Get-NetIPsecRule -DisplayName "{rule_name}" -ErrorAction SilentlyContinue | Remove-NetIPsecRule
 
-New-NetIPsecQuickModeCryptoSet -Name "QMCrypto" `
-  -Encryption AES256 `
-  -Integrity SHA256 `
-  -PfsGroup PFS2048
-
-New-NetIPsecRule -DisplayName "{tunnel['id']}" `
-  -RemoteAddress {tunnel['peer_ip']} `
+# Create IPsec rule (Windows chooses crypto defaults)
+New-NetIPsecRule `
+  -DisplayName "{rule_name}" `
+  -RemoteAddress {peer_ip} `
   -InboundSecurity Require `
   -OutboundSecurity Require `
-  -MainModeCryptoSet MMCrypto `
-  -QuickModeCryptoSet QMCrypto
+  -Profile Any
 """
-        subprocess.run(["powershell", "-Command", ps_script], check=True)
+
+        result = self._run_ps(ps_script)
+
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Windows IPsec apply failed:\\n{result.stderr}"
+            )
 
     def status(self):
-        return subprocess.check_output(
-            ["powershell", "Get-NetIPsecRule"]
-        ).decode()
+        try:
+            result = self._run_ps(
+                "Get-NetIPsecMainModeSA | "
+                "Select LocalAddress,RemoteAddress,State | ConvertTo-Json"
+            )
 
+            if result.returncode != 0:
+                return {"status": "ERROR", "error": result.stderr}
 
-# Enable IKEv2
-# Set-ItemProperty `
-#   -Path HKLM:\SYSTEM\CurrentControlSet\Services\RasMan\Parameters `
-#   -Name NegotiateDH2048_AES256 `
-#   -Value 1
+            return {
+                "status": "OK",
+                "sas": json.loads(result.stdout) if result.stdout else []
+            }
 
-# # Open firewall
-# netsh advfirewall firewall add rule name="IPSec IKE" dir=in protocol=UDP localport=500 action=allow
-# netsh advfirewall firewall add rule name="IPSec NAT-T" dir=in protocol=UDP localport=4500 action=allow
+        except Exception as e:
+            return {"status": "ERROR", "error": str(e)}

@@ -19,7 +19,7 @@ def main():
     while True:
         policies = fetch_policies()
         tunnels = fetch_tunnels()
-
+        print(tunnels)
         for t in tunnels:
             policy = next(p for p in policies if p["id"] == t["policy_id"])
             ipsec.apply_tunnel(t, policy)

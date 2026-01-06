@@ -8,16 +8,33 @@ from rest_framework import status
 
 from .models import IPSecPolicy
 from apps.common.utils.response import api_response
+from .serializers import IPSecPolicySerializer
+
 
 class PolicyView(APIView):
-    permission_classes = [IsAuthenticated]
+    # permission_classes = [IsAuthenticated]
 
     def get(self, request):
         try:
-            policies = IPSecPolicy.objects.all().values()
-            return api_response(True, "Policies fetched", list(policies))
+            device = request.user   # device from certificate
+
+            policies = IPSecPolicy.objects.filter(is_active=True)
+
+            serializer = IPSecPolicySerializer(policies, many=True)
+
+            return api_response(
+                True,
+                "Policies fetched successfully",
+                serializer.data,
+                status.HTTP_200_OK
+            )
+
         except Exception as e:
-            return api_response(False, str(e), http_status=500)
+            return api_response(
+                False,
+                f"Failed to fetch policies: {str(e)}",
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     def post(self, request):
         try:
