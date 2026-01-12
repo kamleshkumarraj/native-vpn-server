@@ -1,6 +1,7 @@
 # control_plane/urls.py
 from django.urls import path
 
+from django.contrib import admin
 from apps.devices.views import DeviceRegisterView
 from apps.certificates.views import CertificateSignView
 from apps.policies.views import PolicyView
@@ -9,6 +10,7 @@ from apps.telemetry.views import HeartbeatView, StatusView
 from apps.accounts.views import RegisterView, LoginView
 
 urlpatterns = [
+    path('admin/', admin.site.urls),
     path("api/devices/register/", DeviceRegisterView.as_view()),
     path("api/certificates/sign/", CertificateSignView.as_view()),
     path("api/policies/", PolicyView.as_view()),
