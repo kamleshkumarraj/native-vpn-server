@@ -124,7 +124,7 @@ def generate_key_and_csr(device_id: str) -> str:
     return csr_pem
 
 
-def request_certificate(csr_pem: str) -> None:
+def request_certificate(csr_pem: str, device_id: str) -> None:
     """
     Request signed certificate from control-plane.
     Bootstrap phase: no mTLS, no client cert.
@@ -132,7 +132,7 @@ def request_certificate(csr_pem: str) -> None:
 
     resp = requests.post(
         f"{CONTROL_PLANE_URL}/api/certificates/sign/",
-        json={"csr": csr_pem},
+        json={"csr": csr_pem, "device_id": device_id},
         timeout=15
     )
 
