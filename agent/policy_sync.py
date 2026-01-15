@@ -5,8 +5,8 @@ def fetch_policies():
     from api_client import mtls_get
 
 
-def fetch_policies():
-    resp = mtls_get("/api/policies/")
+def fetch_policies(device_id):
+    resp = mtls_get(f"/api/policies/?device_id={device_id}")
     payload = resp.json()
     print(payload)
     if not payload.get("success"):
@@ -22,5 +22,5 @@ def fetch_policies():
     return payload["data"]
 
 
-def fetch_tunnels():
-    return mtls_get("/api/tunnels/").json()["data"]
+def fetch_tunnels(device_id):
+    return mtls_get(f"/api/tunnels/?device_id={device_id}").json()["data"]
