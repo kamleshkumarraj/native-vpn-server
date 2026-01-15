@@ -9,7 +9,9 @@ from apps.common.auth.cert_auth import DeviceCertificateAuthentication
 from apps.common.utils.response import api_response
 
 class HeartbeatView(APIView):
-    authentication_classes = [DeviceCertificateAuthentication]
+    # authentication_classes = [DeviceCertificateAuthentication]
+    authentication_classes = []   # Bootstrap phase
+    permission_classes = []
 
     def post(self, request):
         try:

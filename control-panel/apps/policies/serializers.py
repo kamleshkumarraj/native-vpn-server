@@ -4,51 +4,65 @@ from .models import IPSecPolicy
 
 class IPSecPolicySerializer(serializers.ModelSerializer):
     """
-    Serializer for sending IPsec policies to agent.
-    Designed for control-plane → data-plane consumption.
+    Serializer for sending IPsec policies to Agent.
+    Control-Plane → Data-Plane.
+    One tunnel receives multiple policies.
     """
 
     class Meta:
         model = IPSecPolicy
-
         fields = (
             "id",
             "name",
 
-            # --- IPsec mode ---
-            "mode",              # ESP_TUNNEL / AH_TRANSPORT etc
+            # ---- Type & ordering ----
+            "policy_type",
+            "priority",
 
-            # --- Cryptographic parameters ---
-            "encryption_algo",   # AES-128 / AES-256
-            "integrity_algo",    # SHA1 / SHA256 / SHA384
-            "dh_group",          # MODP_2048 / ECP_256
-            "ike_version",       # IKEv1 / IKEv2
+            # ---- IPsec mode ----
+            "mode",              # ESP_TUNNEL / ESP_TRANSPORT
+            "ike_version",       # IKEv2
 
-            # --- Traffic selection ---
-            "full_tunnel",       # true = 0.0.0.0/0
-            "include_subnets",   # selective encryption
-            "exclude_subnets",   # bypass networks
+            # ---- Cryptography ----
+            "encryption_algo",
+            "integrity_algo",
+            "dh_group",
 
-            # --- Metadata ---
-            "created_at",
+            # ---- Traffic Selection ----
+            "full_tunnel",
+            "include_subnets",
+            "exclude_subnets",
         )
 
+    # ---------------- Validators ----------------
+
     def validate_include_subnets(self, value):
-        """
-        Ensure include_subnets is a list of CIDRs
-        """
         if not isinstance(value, list):
             raise serializers.ValidationError(
-                "include_subnets must be a list"
+                "include_subnets must be a list of CIDR strings"
             )
         return value
 
     def validate_exclude_subnets(self, value):
-        """
-        Ensure exclude_subnets is a list of CIDRs
-        """
         if not isinstance(value, list):
             raise serializers.ValidationError(
-                "exclude_subnets must be a list"
+                "exclude_subnets must be a list of CIDR strings"
             )
         return value
+
+    def validate(self, attrs):
+        """
+        Enforce correct split vs full tunnel logic.
+        """
+
+        if attrs.get("full_tunnel") and attrs.get("include_subnets"):
+            raise serializers.ValidationError(
+                "Full tunnel policies cannot have include_subnets"
+            )
+
+        if not attrs.get("full_tunnel") and not attrs.get("include_subnets"):
+            raise serializers.ValidationError(
+                "Split tunnel policy must have include_subnets"
+            )
+
+        return attrs

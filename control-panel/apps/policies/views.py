@@ -1,30 +1,51 @@
-from django.shortcuts import render
-
-# Create your views here.
 # apps/policies/views.py
+
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
+from django.shortcuts import get_object_or_404
 
 from .models import IPSecPolicy
-from apps.common.utils.response import api_response
 from .serializers import IPSecPolicySerializer
-
+from apps.common.utils.response import api_response
+from apps.tunnels.models import Tunnel
+from apps.common.auth.cert_auth import DeviceCertificateAuthentication
+from apps.devices.models import Device
 
 class PolicyView(APIView):
-    # permission_classes = [IsAuthenticated]
-
+    """
+    Policy API aligned with:
+    Device → Tunnel → Policies → IPsec
+    """
+    # authentication_classes = [DeviceCertificateAuthentication] 
+    authentication_classes = []   # Bootstrap phase
+    permission_classes = []
     def get(self, request):
+        
         try:
-            device = request.user   # device from certificate
+            # Device is identified via certificate
+            device_id = request.query_params.get("device_id")
+            device  = Device.objects.filter(id=device_id).first()
 
-            policies = IPSecPolicy.objects.filter(is_active=True)
+            # Get device tunnel
+            tunnel = getattr(device, "tunnel", None)
+            if not tunnel:
+                return api_response(
+                    True,
+                    "No tunnel for this device",
+                    []
+                )
+
+            # Fetch only policies attached to this tunnel
+            policies = IPSecPolicy.objects.filter(
+                tunnels=tunnel,
+                is_active=True
+            ).order_by("priority")
 
             serializer = IPSecPolicySerializer(policies, many=True)
 
             return api_response(
                 True,
-                "Policies fetched successfully",
+                "Policies fetched",
                 serializer.data,
                 status.HTTP_200_OK
             )
@@ -37,27 +58,58 @@ class PolicyView(APIView):
             )
 
     def post(self, request):
+        """
+        Admin creates a new policy.
+        Does NOT attach to any tunnel yet.
+        """
         try:
-            policy = IPSecPolicy.objects.create(**request.data)
-            return api_response(True, "Policy created", {"id": policy.id})
+            serializer = IPSecPolicySerializer(data=request.data)
+            if not serializer.is_valid():
+                return api_response(False, serializer.errors, http_status=400)
+
+            policy = serializer.save()
+
+            return api_response(
+                True,
+                "Policy created",
+                {"id": policy.id},
+                status.HTTP_201_CREATED
+            )
+
         except Exception as e:
             return api_response(False, str(e), http_status=400)
 
     def put(self, request, pk):
+        """
+        Update policy attributes.
+        Does not control tunnel assignment.
+        """
         try:
-            policy = IPSecPolicy.objects.get(pk=pk)
-            for key, value in request.data.items():
-                setattr(policy, key, value)
-            policy.save()
+            policy = get_object_or_404(IPSecPolicy, pk=pk)
+
+            serializer = IPSecPolicySerializer(
+                policy, data=request.data, partial=True
+            )
+
+            if not serializer.is_valid():
+                return api_response(False, serializer.errors, http_status=400)
+
+            serializer.save()
+
             return api_response(True, "Policy updated")
-        except IPSecPolicy.DoesNotExist:
-            return api_response(False, "Policy not found", http_status=404)
+
         except Exception as e:
             return api_response(False, str(e), http_status=400)
 
     def delete(self, request, pk):
+        """
+        Delete policy safely.
+        """
         try:
-            IPSecPolicy.objects.get(pk=pk).delete()
+            policy = get_object_or_404(IPSecPolicy, pk=pk)
+            policy.delete()
+
             return api_response(True, "Policy deleted")
+
         except Exception as e:
             return api_response(False, str(e), http_status=400)

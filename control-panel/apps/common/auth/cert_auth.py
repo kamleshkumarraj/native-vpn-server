@@ -1,4 +1,7 @@
 import hashlib
+from cryptography import x509
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
 
@@ -7,30 +10,24 @@ from apps.devices.models import Device
 
 def extract_cert_fingerprint(pem_cert: str) -> str:
     """
-    PEM certificate se SHA256 fingerprint nikalta hai
+    Extract SHA256 fingerprint from X.509 certificate (DER bytes).
     """
-    # PEM header/footer hatao
-    cert_body = pem_cert.replace(
-        "-----BEGIN CERTIFICATE-----", ""
-    ).replace(
-        "-----END CERTIFICATE-----", ""
-    ).replace("\n", "")
+    cert = x509.load_pem_x509_certificate(
+        pem_cert.encode(),
+        default_backend()
+    )
 
-    cert_bytes = cert_body.encode()
-    fingerprint = hashlib.sha256(cert_bytes).hexdigest()
+    fingerprint = cert.fingerprint(hashes.SHA256()).hex()
     return fingerprint
 
 
 class DeviceCertificateAuthentication(BaseAuthentication):
     """
-    Certificate based authentication for Agent / Gateway
+    Zero-Trust Device Authentication using mTLS certificates.
     """
 
     def authenticate(self, request):
-        """
-        Ye function har request par chalega
-        """
-        # 🔹 Web server (nginx / apache) client cert yahan inject karega
+        # nginx / apache injects PEM here
         pem_cert = request.META.get("SSL_CLIENT_CERT")
 
         if not pem_cert:
@@ -38,14 +35,12 @@ class DeviceCertificateAuthentication(BaseAuthentication):
 
         fingerprint = extract_cert_fingerprint(pem_cert)
 
-        # 🔹 Device DB se match karo
         device = Device.objects.filter(
             certificate_fingerprint=fingerprint,
             is_active=True
         ).first()
 
         if not device:
-            raise AuthenticationFailed("Invalid or revoked device certificate")
+            raise AuthenticationFailed("Invalid, expired, or revoked device certificate")
 
-        # DRF expects (user, auth)
         return (device, None)

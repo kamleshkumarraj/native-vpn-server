@@ -1,31 +1,30 @@
 import subprocess
 from pathlib import Path
 from typing import Tuple
+from cryptography import x509
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.serialization import pkcs12
 
 # ---------------- CONFIG ----------------
 
-CERT_DIR = Path("agent/certs")
-PFX_PASSWORD = "KamleshVPN"
-PFX_FILE = CERT_DIR / "device.pfx"
+CERT_DIR = Path("certs")
+PFX_PASSWORD = b"KamleshVPN"
+
 DEVICE_CERT = CERT_DIR / "device.crt"
-DEVICE_KEY = CERT_DIR / "device.key"
-ROOT_CA = CERT_DIR / "ca.crt"
+DEVICE_KEY  = CERT_DIR / "device.key"
+ROOT_CA     = CERT_DIR / "ca.crt"
+PFX_FILE    = CERT_DIR / "device.pfx"
 
 
-# ---------------- CORE EXEC ----------------
+# ---------------- SYSTEM EXEC ----------------
 
 def _run(cmd: list) -> Tuple[int, str, str]:
-    p = subprocess.run(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        shell=False
-    )
-    return p.returncode, p.stdout.strip(), p.stderr.strip()
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    return p.returncode, p.stdout, p.stderr
 
 
-# ---------------- FILE CHECKS ----------------
+# ---------------- FILE CHECK ----------------
 
 def _ensure_files():
     for f in [DEVICE_KEY, DEVICE_CERT, ROOT_CA]:
@@ -33,70 +32,80 @@ def _ensure_files():
             raise RuntimeError(f"Missing required file: {f}")
 
 
-# ---------------- CERT PARSING ----------------
+# ---------------- CERT LOADING ----------------
 
-def _get_cert_cn(cert_path: Path) -> str:
-    rc, out, err = _run([
-        "openssl", "x509",
-        "-in", str(cert_path),
-        "-noout",
-        "-subject"
-    ])
-
-    if rc != 0:
-        raise RuntimeError(f"Failed to read cert {cert_path}: {err}")
-
-    # subject=CN = 0251daea-680c-4c25-9df3-b045da16a87b
-    return out.split("CN=")[1].strip()
+def _load_cert(path: Path):
+    return x509.load_pem_x509_certificate(path.read_bytes(), default_backend())
 
 
-# ---------------- WINDOWS STORE CHECKS ----------------
+def _load_key(path: Path):
+    return serialization.load_pem_private_key(path.read_bytes(), password=None, backend=default_backend())
+
+
+def _get_cn(cert: x509.Certificate) -> str:
+    return cert.subject.get_attributes_for_oid(x509.NameOID.COMMON_NAME)[0].value
+
+
+# ---------------- WINDOWS STORE ----------------
 
 def _store_contains(store: str, cn: str) -> bool:
     rc, out, err = _run(["certutil", "-store", store])
     if rc != 0:
-        raise RuntimeError(f"Cannot read {store} store: {err}")
+        raise RuntimeError(err)
     return cn in out
 
 
 def device_cert_installed() -> bool:
-    return _store_contains("My", _get_cert_cn(DEVICE_CERT))
+    return _store_contains("My", _get_cn(_load_cert(DEVICE_CERT)))
 
 
 def root_ca_installed() -> bool:
-    return _store_contains("Root", _get_cert_cn(ROOT_CA))
+    return _store_contains("Root", _get_cn(_load_cert(ROOT_CA)))
 
 
-# ---------------- PFX GENERATION ----------------
+# ---------------- PFX MANAGEMENT ----------------
 
-def create_pfx():
+def ensure_pfx_exists():
+    """
+    Create device.pfx only if missing.
+    Uses Python crypto (no OpenSSL).
+    """
+
+    if PFX_FILE.exists():
+        print("📦 device.pfx already exists")
+        return
+
+    print("📦 Creating device.pfx")
+
     _ensure_files()
 
-    rc, _, err = _run([
-        "openssl", "pkcs12", "-export",
-        "-inkey", str(DEVICE_KEY),
-        "-in", str(DEVICE_CERT),
-        "-certfile", str(ROOT_CA),
-        "-out", str(PFX_FILE),
-        "-passout", f"pass:{PFX_PASSWORD}"
-    ])
+    cert = _load_cert(DEVICE_CERT)
+    key = _load_key(DEVICE_KEY)
+    ca  = _load_cert(ROOT_CA)
 
-    if rc != 0:
-        raise RuntimeError(f"PFX creation failed: {err}")
+    pfx = pkcs12.serialize_key_and_certificates(
+        name=_get_cn(cert).encode(),
+        key=key,
+        cert=cert,
+        cas=[ca],
+        encryption_algorithm=serialization.BestAvailableEncryption(PFX_PASSWORD)
+    )
+
+    PFX_FILE.write_bytes(pfx)
 
 
-# ---------------- INSTALLERS ----------------
+# ---------------- INSTALL ----------------
 
 def install_device_cert():
     rc, _, err = _run([
         "certutil",
         "-f",
-        "-p", PFX_PASSWORD,
+        "-p", PFX_PASSWORD.decode(),
         "-importpfx",
         str(PFX_FILE)
     ])
     if rc != 0:
-        raise RuntimeError(f"Device cert install failed: {err}")
+        raise RuntimeError(err)
 
 
 def install_root_ca():
@@ -108,50 +117,37 @@ def install_root_ca():
         str(ROOT_CA)
     ])
     if rc != 0:
-        raise RuntimeError(f"Root CA install failed: {err}")
+        raise RuntimeError(err)
 
+
+# ---------------- VERIFY ----------------
 
 def verify_installation():
-    """
-    Verifies certs exist in Windows stores
-    """
-    rc1, my_store, _ = _run(["certutil", "-store", "My"])
-    rc2, root_store, _ = _run(["certutil", "-store", "Root"])
+    rc1, my, _ = _run(["certutil", "-store", "My"])
+    rc2, root, _ = _run(["certutil", "-store", "Root"])
+    if rc1 or rc2:
+        raise RuntimeError("Certificate store read failed")
+    return {"my": my, "root": root}
 
-    if rc1 != 0 or rc2 != 0:
-        raise RuntimeError("Failed to read certificate stores")
 
-    return {
-        "personal_store": my_store,
-        "root_store": root_store
-    }
-
-# ---------------- PUBLIC ENTRYPOINT ----------------
+# ---------------- PUBLIC API ----------------
 
 def window_install_vpn_certificates():
-    """
-    Production-grade PKI bootstrap for Windows VPN agent.
-    Idempotent, safe, and enterprise-correct.
-    """
+    print("🔐 Checking Windows PKI state")
 
-    print("🔐 Verifying Windows PKI state...")
+    ensure_pfx_exists()
 
     if not device_cert_installed():
-        print("📦 Device cert not found — generating PFX")
-        create_pfx()
-
-        print("📥 Installing device certificate into MY store")
+        print("📥 Installing device certificate")
         install_device_cert()
     else:
-        print("✅ Device certificate already present")
+        print("✅ Device certificate already installed")
 
     if not root_ca_installed():
-        print("🔒 Root CA not trusted — installing")
+        print("🔒 Installing Root CA")
         install_root_ca()
     else:
         print("✅ Root CA already trusted")
-        
-    print("✅ Verifying certificate stores...")
-    stores = verify_installation()
 
-    print("🎯 Windows device successfully enrolled into VPN PKI")
+    verify_installation()
+    print("🎯 Windows ready for IKEv2 VPN")

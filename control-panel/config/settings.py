@@ -27,6 +27,15 @@ DEBUG = True
 
 ALLOWED_HOSTS = []
 
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "apps.common.auth.cert_auth.DeviceCertificateAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+}
+
 
 # Application definition
 
@@ -43,6 +52,7 @@ INSTALLED_APPS = [
     'apps.policies',
     'apps.telemetry',
     'apps.tunnels',
+    'apps.gateways',
     
     'rest_framework'
 ]

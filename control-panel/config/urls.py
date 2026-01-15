@@ -8,6 +8,7 @@ from apps.policies.views import PolicyView
 from apps.tunnels.views import TunnelView
 from apps.telemetry.views import HeartbeatView, StatusView
 from apps.accounts.views import RegisterView, LoginView
+from apps.tunnels.views import TunnelStatusView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -20,5 +21,5 @@ urlpatterns = [
     path("api/telemetry/status/", StatusView.as_view()),
     path("api/auth/register/", RegisterView.as_view()),
     path("api/auth/login/", LoginView.as_view()),
-    
+    path("api/tunnel/status/", TunnelStatusView.as_view()),
 ]

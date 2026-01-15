@@ -27,27 +27,60 @@ def ensure_dirs():
         raise FileNotFoundError(f"CA private key not found: {CA_KEY}")
 
 
-def sign_csr(csr_path):
+import os
+import subprocess
+import uuid
+import tempfile
+
+def sign_csr(csr_path, cert_type="device"):
+    """
+    cert_type:
+      - "device"  → clientAuth
+      - "gateway" → serverAuth
+    """
     ensure_dirs()
 
-    # ✅ ONLY THIS path must be used
     output_cert_path = os.path.join(
         TMP_DIR, f"{uuid.uuid4()}.crt"
     )
 
-    subprocess.run(
-        [
-            "openssl", "x509", "-req",
-            "-in", csr_path,
-            "-CA", CA_CERT,
-            "-CAkey", CA_KEY,
-            "-CAcreateserial",
-            "-out", output_cert_path,
-            "-days", "365",
-            "-sha256"
-        ],
-        check=True
-    )
+    # Decide EKU based on cert type
+    if cert_type == "device":
+        eku = "clientAuth"
+    elif cert_type == "gateway":
+        eku = "serverAuth"
+    else:
+        raise ValueError("cert_type must be 'device' or 'gateway'")
 
-    # ✅ RETURN EXACT PATH THAT EXISTS
+    # Create a temporary OpenSSL extension file
+    with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+        f.write(f"""
+[ v3_req ]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = {eku}
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer
+""")
+        ext_file = f.name
+
+    try:
+        subprocess.run(
+            [
+                "openssl", "x509", "-req",
+                "-in", csr_path,
+                "-CA", CA_CERT,
+                "-CAkey", CA_KEY,
+                "-CAcreateserial",
+                "-out", output_cert_path,
+                "-days", "365",
+                "-sha256",
+                "-extfile", ext_file,
+                "-extensions", "v3_req"
+            ],
+            check=True
+        )
+    finally:
+        os.remove(ext_file)
+
     return output_cert_path
